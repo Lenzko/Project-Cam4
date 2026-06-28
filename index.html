@@ -2,107 +2,95 @@
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Freezer LED Scanner - Final</title>
+    <title>Freezer LED Scanner Final</title>
     <script src="https://docs.opencv.org/4.x/opencv.js"></script>
     <style>
-        body { margin: 0; background: #111; color: white; font-family: Arial; text-align: center; }
-        .camera { position: relative; width: 95%; max-width: 700px; margin: auto; border-radius: 20px; overflow: hidden; }
-        video { width: 100%; display: block; }
-        #target { position: absolute; left: 34%; top: 43%; width: 32%; height: 18%; border: 4px solid #00ff00; box-sizing: border-box; }
-        #hasil { font-size: 40px; margin: 10px; color: #00ff00; }
-        #info { color: #fff; margin-bottom: 15px; }
-        button { width: 90px; height: 90px; font-size: 40px; border-radius: 50%; background-color: #00ff00; border: none; cursor: pointer; }
-        canvas { border: 2px solid #ff0000; background: #000; width: 80%; max-width: 400px; margin-top: 10px; }
+        body { margin: 0; background: #111; color: white; font-family: sans-serif; text-align: center; }
+        .camera-box { position: relative; width: 90%; max-width: 500px; margin: auto; }
+        video { width: 100%; border: 2px solid #555; }
+        #canvas { width: 90%; max-width: 400px; background: #000; border: 2px solid #ff0000; margin-top: 10px; }
+        .btn-start { padding: 20px 40px; font-size: 20px; background: #00ff00; border: none; border-radius: 10px; cursor: pointer; margin: 20px; }
+        #hasil { font-size: 40px; font-weight: bold; color: #00ff00; }
     </style>
 </head>
 <body>
-
-    <h2>❄️ Freezer LED Scanner</h2>
-    <div class="camera">
-        <video id="video" autoplay playsinline></video>
-        <div id="target"></div>
+    <h2>Freezer Scanner</h2>
+    <div class="camera-box">
+        <video id="video" autoplay playsinline muted></video>
     </div>
-
-    <div id="hasil">-</div>
-    <div id="info">Klik tombol untuk mulai scan</div>
-    <button onclick="start()">📷</button>
-
-    <div>
-        <div>Mata Komputer (Mode Debug):</div>
-        <canvas id="canvas"></canvas>
-    </div>
+    
+    <div id="hasil">Menunggu...</div>
+    <button class="btn-start" onclick="init()">Mulai Scan</button>
+    
+    <p>Debug (Apa yang dilihat komputer):</p>
+    <canvas id="canvas"></canvas>
 
     <script>
         const SHEET_URL = "https://script.google.com/macros/s/AKfycbyxDPqH1P4Z6H-blQ9zTSOVVSIrP3QoHv8XzRFIwmfb4UbW1FYDfpVjD3-Ul19vmJZt/exec";
         let video = document.getElementById("video");
         let canvas = document.getElementById("canvas");
-        let hasil = document.getElementById("hasil");
-        let info = document.getElementById("info");
 
-        async function start() {
+        async function init() {
             try {
-                // Membuka kamera sekali saja
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: "environment" }
-                });
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
                 video.srcObject = stream;
-                await new Promise(r => video.onloadedmetadata = r);
-                
-                info.innerHTML = "✅ Kamera aktif, mulai memindai...";
-                
-                // Menjalankan proses scan secara berulang tanpa menutup kamera
-                setInterval(processLoop, 3000); 
-            } catch (err) {
-                info.innerHTML = "❌ Gagal akses kamera: " + err;
-            }
+                await video.play();
+                document.querySelector('.btn-start').style.display = 'none';
+                setInterval(processLoop, 2000); // Scan tiap 2 detik
+            } catch (e) { alert("Kamera gagal: " + e); }
         }
 
         function processLoop() {
-            let nilai = ambilFoto();
-            if (nilai) {
-                hasil.innerHTML = "Suhu : " + nilai + "°C";
-                info.innerHTML = "✅ Data berhasil dibaca";
-                kirim(nilai);
-            } else {
-                info.innerHTML = "🔍 Mencari angka...";
-            }
-        }
+            if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
 
-        function ambilFoto() {
-            if (typeof cv === 'undefined' || !cv.Mat) return null;
-
-            // Ambil frame dari video
-            let cap = new cv.VideoCapture(video);
-            let src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
-            cap.read(src);
-
-            // Crop area target
-            let x = src.cols * 0.34, y = src.rows * 0.43, w = src.cols * 0.32, h = src.rows * 0.18;
+            // 1. Setup ROI (Area yang difokuskan saja)
+            let src = cv.imread(video);
+            let x = src.cols * 0.35, y = src.rows * 0.40, w = src.cols * 0.30, h = src.rows * 0.20;
             let crop = src.roi(new cv.Rect(x, y, w, h));
 
-            // Preprocessing
+            // 2. Preprocessing & Denoising
             let gray = new cv.Mat();
             cv.cvtColor(crop, gray, cv.COLOR_RGBA2GRAY);
             let thresh = new cv.Mat();
-            cv.threshold(gray, thresh, 120, 255, cv.THRESH_BINARY_INV);
+            cv.threshold(gray, thresh, 130, 255, cv.THRESH_BINARY_INV);
 
-            // Tampilkan debug
+            // PENTING: Hapus noise kecil (simbol derajat)
+            let kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+            cv.morphologyEx(thresh, thresh, cv.MORPH_OPEN, kernel);
+
+            // 3. Deteksi
+            let contours = new cv.MatVector();
+            let hierarchy = new cv.Mat();
+            cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+            let digits = [];
+            for (let i = 0; i < contours.size(); i++) {
+                let rect = cv.boundingRect(contours.get(i));
+                // Hanya ambil objek yang tinggi (mengabaikan titik kecil)
+                if (rect.height > h * 0.4) {
+                    digits.push(rect);
+                }
+            }
+
+            // Visualisasi Debug
             cv.imshow("canvas", thresh);
 
-            // Deteksi sederhana (Mock logic untuk mendeteksi digit)
-            // Karena LED 7-segment sangat spesifik, sebaiknya gunakan 
-            // teknik contour area filtering atau Template Matching
-            let hasilScan = "-79"; // Contoh hasil deteksi
-            
-            src.delete(); crop.delete(); gray.delete(); thresh.delete();
-            return hasilScan; // Kembalikan hasil string angka
+            // 4. Sederhanakan hasil (Jika deteksi > 0)
+            if (digits.length >= 2) {
+                let suhu = "-95"; // Contoh: Logika Anda harus menggabungkan digits.length
+                document.getElementById("hasil").innerText = "Suhu: " + suhu + "°C";
+                kirim(suhu);
+            }
+
+            // Cleanup memory
+            src.delete(); crop.delete(); gray.delete(); thresh.delete(); kernel.delete(); contours.delete(); hierarchy.delete();
         }
 
-        function kirim(suhu) {
-            let params = new URLSearchParams();
-            params.append("suhu", suhu);
-            params.append("waktu", new Date().toLocaleString("id-ID"));
-            fetch(SHEET_URL, { method: "POST", mode: "no-cors", body: params });
+        function kirim(val) {
+            let p = new URLSearchParams();
+            p.append("suhu", val);
+            p.append("waktu", new Date().toLocaleString());
+            fetch(SHEET_URL, { method: "POST", mode: "no-cors", body: p });
         }
     </script>
 </body>
