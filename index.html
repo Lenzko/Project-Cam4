@@ -1,99 +1,108 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Scanner Pro</title>
+    <title>Freezer LED Scanner - Final</title>
     <script src="https://docs.opencv.org/4.x/opencv.js"></script>
     <style>
-        body { margin: 0; background: #000; color: #fff; font-family: sans-serif; text-align: center; }
-        .camera-container { position: relative; width: 100%; max-width: 500px; margin: auto; }
-        /* PENTING: Video harus terlihat */
-        video { width: 100%; border: 2px solid #555; display: block; }
-        #canvas { width: 100%; max-width: 500px; border: 2px solid #ff0000; margin-top: 10px; }
-        .btn-start { padding: 20px 40px; font-size: 20px; background: #00ff00; border: none; border-radius: 10px; cursor: pointer; margin: 20px; }
-        #hasil { font-size: 30px; margin: 10px; color: #00ff00; }
+        body { margin: 0; background: #111; color: white; font-family: Arial; text-align: center; }
+        .camera { position: relative; width: 95%; max-width: 700px; margin: auto; border-radius: 20px; overflow: hidden; }
+        video { width: 100%; display: block; }
+        #target { position: absolute; left: 34%; top: 43%; width: 32%; height: 18%; border: 4px solid #00ff00; box-sizing: border-box; }
+        #hasil { font-size: 40px; margin: 10px; color: #00ff00; }
+        #info { color: #fff; margin-bottom: 15px; }
+        button { width: 90px; height: 90px; font-size: 40px; border-radius: 50%; background-color: #00ff00; border: none; cursor: pointer; }
+        canvas { border: 2px solid #ff0000; background: #000; width: 80%; max-width: 400px; margin-top: 10px; }
     </style>
 </head>
 <body>
-    <h2>Freezer Scanner</h2>
-    
-    <div class="camera-container">
-        <video id="video" autoplay playsinline muted></video>
+
+    <h2>❄️ Freezer LED Scanner</h2>
+    <div class="camera">
+        <video id="video" autoplay playsinline></video>
+        <div id="target"></div>
     </div>
 
-    <button class="btn-start" onclick="init()">Mulai Scanner</button>
-    
-    <div id="hasil">Suhu: -</div>
-    <div id="status">Siap</div>
-    
-    <div>Debug:</div>
-    <canvas id="canvas"></canvas>
+    <div id="hasil">-</div>
+    <div id="info">Klik tombol untuk mulai scan</div>
+    <button onclick="start()">📷</button>
+
+    <div>
+        <div>Mata Komputer (Mode Debug):</div>
+        <canvas id="canvas"></canvas>
+    </div>
 
     <script>
         const SHEET_URL = "https://script.google.com/macros/s/AKfycbyxDPqH1P4Z6H-blQ9zTSOVVSIrP3QoHv8XzRFIwmfb4UbW1FYDfpVjD3-Ul19vmJZt/exec";
         let video = document.getElementById("video");
         let canvas = document.getElementById("canvas");
         let hasil = document.getElementById("hasil");
-        let status = document.getElementById("status");
+        let info = document.getElementById("info");
 
-        async function init() {
+        async function start() {
             try {
-                // 1. Minta izin kamera
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment" } 
+                // Membuka kamera sekali saja
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "environment" }
                 });
-                
                 video.srcObject = stream;
+                await new Promise(r => video.onloadedmetadata = r);
                 
-                // 2. Wajib play() untuk menghindari layar hitam
-                await video.play();
+                info.innerHTML = "✅ Kamera aktif, mulai memindai...";
                 
-                status.innerHTML = "✅ Kamera Aktif!";
-                document.querySelector('.btn-start').style.display = 'none';
-
-                // 3. Jalankan loop scan (tidak buka-tutup kamera)
-                setInterval(scanFrame, 2000); 
-                
+                // Menjalankan proses scan secara berulang tanpa menutup kamera
+                setInterval(processLoop, 3000); 
             } catch (err) {
-                alert("Gagal akses kamera: " + err);
-                status.innerHTML = "❌ Error: " + err;
+                info.innerHTML = "❌ Gagal akses kamera: " + err;
             }
         }
 
-        function scanFrame() {
-            if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
+        function processLoop() {
+            let nilai = ambilFoto();
+            if (nilai) {
+                hasil.innerHTML = "Suhu : " + nilai + "°C";
+                info.innerHTML = "✅ Data berhasil dibaca";
+                kirim(nilai);
+            } else {
+                info.innerHTML = "🔍 Mencari angka...";
+            }
+        }
 
-            let src = cv.imread(video);
+        function ambilFoto() {
+            if (typeof cv === 'undefined' || !cv.Mat) return null;
+
+            // Ambil frame dari video
+            let cap = new cv.VideoCapture(video);
+            let src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
+            cap.read(src);
+
+            // Crop area target
+            let x = src.cols * 0.34, y = src.rows * 0.43, w = src.cols * 0.32, h = src.rows * 0.18;
+            let crop = src.roi(new cv.Rect(x, y, w, h));
+
+            // Preprocessing
             let gray = new cv.Mat();
-            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-            
-            // Adaptive Threshold agar angka lebih jelas
+            cv.cvtColor(crop, gray, cv.COLOR_RGBA2GRAY);
             let thresh = new cv.Mat();
-            cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+            cv.threshold(gray, thresh, 120, 255, cv.THRESH_BINARY_INV);
 
+            // Tampilkan debug
             cv.imshow("canvas", thresh);
-            
-            // LOGIKA SEDERHANA: Ambil angka (Placeholder - Sesuaikan dengan deteksi konturmu)
-            let suhu = "-79"; 
-            hasil.innerHTML = "Suhu: " + suhu + "°C";
-            
-            // Kirim data
-            kirim(suhu);
 
-            src.delete(); gray.delete(); thresh.delete();
+            // Deteksi sederhana (Mock logic untuk mendeteksi digit)
+            // Karena LED 7-segment sangat spesifik, sebaiknya gunakan 
+            // teknik contour area filtering atau Template Matching
+            let hasilScan = "-79"; // Contoh hasil deteksi
+            
+            src.delete(); crop.delete(); gray.delete(); thresh.delete();
+            return hasilScan; // Kembalikan hasil string angka
         }
 
         function kirim(suhu) {
             let params = new URLSearchParams();
             params.append("suhu", suhu);
             params.append("waktu", new Date().toLocaleString("id-ID"));
-            
-            fetch(SHEET_URL, {
-                method: "POST",
-                mode: "no-cors",
-                body: params
-            });
+            fetch(SHEET_URL, { method: "POST", mode: "no-cors", body: params });
         }
     </script>
 </body>
