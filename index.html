@@ -2,82 +2,89 @@
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Freezer LED High-Accuracy</title>
+    <title>Freezer Scanner Pro</title>
     <script src="https://docs.opencv.org/4.x/opencv.js"></script>
     <style>
-        body { background: #000; color: #fff; text-align: center; font-family: sans-serif; }
-        video { width: 100%; max-width: 500px; display: none; } /* Tersembunyi karena kita pakai canvas */
-        #canvas { width: 90%; max-width: 400px; border: 2px solid #ff0000; }
-        .hasil { font-size: 50px; font-weight: bold; margin: 20px 0; color: #00ff00; }
+        body { background: #000; color: #fff; text-align: center; font-family: sans-serif; padding: 20px; }
+        #canvas { width: 100%; max-width: 400px; border: 2px solid #ff0000; display: block; margin: 10px auto; }
+        .hasil { font-size: 50px; font-weight: bold; color: #00ff00; margin: 20px; }
+        button { padding: 20px 40px; font-size: 20px; background: #00ff00; border: none; border-radius: 10px; cursor: pointer; }
     </style>
 </head>
 <body>
-    <h2>Scanner Akurasi Tinggi</h2>
-    <video id="video" autoplay playsinline></video>
+    <h2>Freezer Scanner Pro</h2>
+    <video id="video" style="display:none;" autoplay playsinline></video>
     <canvas id="canvas"></canvas>
-    <div class="hasil" id="output">-°C</div>
-    <div id="info">Memulai...</div>
+    <div class="hasil" id="output">0°C</div>
+    <button id="btnStart">Mulai Scanner</button>
 
     <script>
         const SHEET_URL = "https://script.google.com/macros/s/AKfycbyxDPqH1P4Z6H-blQ9zTSOVVSIrP3QoHv8XzRFIwmfb4UbW1FYDfpVjD3-Ul19vmJZt/exec";
         let video = document.getElementById("video");
-        
-        async function setup() {
+        let btnStart = document.getElementById("btnStart");
+
+        btnStart.addEventListener("click", async () => {
+            btnStart.style.display = "none";
             const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
             video.srcObject = stream;
             await new Promise(r => video.onloadedmetadata = r);
-            setInterval(processFrame, 2000); // Scan tiap 2 detik
-        }
+            setInterval(scan, 2000); // Scan tiap 2 detik
+        });
 
-        function processFrame() {
+        function scan() {
             if (typeof cv === 'undefined') return;
             let src = cv.imread(video);
             let gray = new cv.Mat();
             cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
             
-            // Threshold adaptif (lebih baik untuk cahaya berubah-ubah)
+            // Adaptive Threshold: Sangat bagus untuk layar LED yang cahayanya bisa berubah
             let thresh = new cv.Mat();
             cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
 
-            // Bersihkan noise kecil (titik-titik cahaya)
+            // Bersihkan noise kecil (ikon hati dll)
             let kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
             cv.morphologyEx(thresh, thresh, cv.MORPH_OPEN, kernel);
 
-            // Deteksi kontur angka
+            // Deteksi Kontur
             let contours = new cv.MatVector();
             let hierarchy = new cv.Mat();
             cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-            let digits = [];
+            let detectedDigits = [];
             for (let i = 0; i < contours.size(); i++) {
                 let rect = cv.boundingRect(contours.get(i));
-                // Filter berdasarkan ukuran yang masuk akal untuk angka
-                if (rect.height > 50 && rect.width > 20) {
-                    digits.push(rect);
+                // Filter: Hanya ambil kotak yang proporsional (mengabaikan titik kecil/noise)
+                if (rect.height > 60 && rect.width > 20) {
+                    detectedDigits.push(rect);
                 }
             }
 
-            // Urutkan berdasarkan posisi X (kiri ke kanan)
-            digits.sort((a, b) => a.x - b.x);
+            // Urutkan dari kiri ke kanan
+            detectedDigits.sort((a, b) => a.x - b.x);
 
-            // Logika sederhana: ambil tinggi dan lebar sebagai fitur dasar
-            // Untuk akurasi mutlak, biasanya menggunakan Template Matching
-            // Tapi untuk saat ini, kita gunakan filter kontur yang lebih bersih
-            let hasil = "";
-            digits.forEach(r => {
-                // Contoh logika: jika lebar/tinggi rasio mendekati angka tertentu
-                let ratio = r.width / r.height;
-                if (ratio > 0.8) hasil += "8"; // Placeholder, sesuaikan dengan bentuk LED
-                else hasil += "1";
+            let strHasil = "";
+            detectedDigits.forEach(d => {
+                // Logika pembacaan sederhana berdasarkan rasio lebar/tinggi
+                let ratio = d.width / d.height;
+                if (ratio > 1.2) strHasil += "-"; // Anggap minus
+                else strHasil += "8"; // Placeholder, karena 7-segment sulit dibaca 100% tanpa AI
             });
 
             cv.imshow("canvas", thresh);
-            document.getElementById("output").innerText = hasil ? hasil + "°C" : "Scan...";
-            
+            if (strHasil.length >= 2) {
+                document.getElementById("output").innerText = strHasil + "°C";
+                kirim(strHasil);
+            }
+
             src.delete(); gray.delete(); thresh.delete(); kernel.delete(); contours.delete(); hierarchy.delete();
         }
 
-        setup();
+        function kirim(suhu) {
+            let params = new URLSearchParams();
+            params.append("suhu", suhu);
+            params.append("waktu", new Date().toLocaleString("id-ID"));
+            fetch(SHEET_URL, { method: "POST", mode: "no-cors", body: params });
+        }
     </script>
 </body>
 </html>
